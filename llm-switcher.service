@@ -1,0 +1,19 @@
+[Unit]
+Description=LLM Switcher - web panel for switching local LLM / GPU workloads (port 3001)
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=pwit
+Group=docker
+WorkingDirectory=/home/pwit
+Environment="HOME=/home/pwit"
+Environment="PORT=3001"
+Environment="SCRIPTS_DIR=/home/pwit"
+ExecStart=/usr/bin/python3 /home/pwit/llm-switcher/server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel przełączania LLM / GPU</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2128;--mut:#6b7480;--line:#e2e5ea;--acc:#3b6df0;--acc2:#e8eefe;--ok:#1a8f4c;--ok2:#e6f6ed;--warn:#b7791f;--err:#c63a3a;--err2:#fdeaea;--term:#111418;--termfg:#d8dee9}
+@media (prefers-color-scheme:dark){:root{--bg:#12151a;--card:#1b1f27;--fg:#e6e9ee;--mut:#8b94a1;--line:#2b313c;--acc:#6b93ff;--acc2:#1f2a47;--ok:#4cc582;--ok2:#163325;--warn:#ecc94b;--err:#ff7a7a;--err2:#3a1d22;--term:#0c0e12;--termfg:#d8dee9}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:24px 16px 64px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+h1{font-size:21px;margin:0;display:flex;align-items:center;gap:10px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 10px}
+.pill{font-size:12px;font-weight:600;padding:4px 10px;border-radius:99px;background:var(--acc2);color:var(--acc);display:inline-flex;align-items:center;gap:6px}
+.pill.ok{background:var(--ok2);color:var(--ok)}
+.pill.err{background:var(--err2);color:var(--err)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.hw-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+.hw-box{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:10px 12px}
+.cnt-list{display:flex;flex-direction:column;gap:10px}
+.cnt-item{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.cnt-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.cnt-head-left{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ep-list{display:flex;flex-direction:column;gap:6px;padding-top:6px;border-top:1px dashed var(--line)}
+.ep-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.ep-main{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:8px 0 4px}
+.bar i{display:block;height:100%;background:var(--acc);transition:width .3s}
+.meta{font-size:12px;color:var(--mut)}
+.scripts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+.script-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;transition:border-color .15s}
+.script-card.active{border-color:var(--ok);box-shadow:0 0 0 1px var(--ok)}
+.script-title{font-weight:700;font-size:15px;word-break:break-all;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.tag{font-size:11px;padding:2px 7px;border-radius:6px;background:var(--bg);border:1px solid var(--line);color:var(--mut);font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.desc{font-size:13px;color:var(--mut);margin-top:6px}
+.controls{display:flex;flex-direction:column;gap:8px;padding-top:10px;border-top:1px solid var(--line)}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+select,input[type=text]{font:inherit;font-size:13px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 9px;width:100%}
+button{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:7px 14px;cursor:pointer;transition:.15s}
+button:hover:not(:disabled){border-color:var(--acc);color:var(--acc)}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff;width:100%;padding:8px 14px}
+button.primary:hover:not(:disabled){opacity:.92;color:#fff}
+button.danger{border-color:var(--err);color:var(--err)}
+button.danger:hover:not(:disabled){background:var(--err2)}
+button:disabled{opacity:.5;cursor:not-allowed}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600;font-size:12px}
+tr:last-child td{border-bottom:0}
+pre#term{background:var(--term);color:var(--termfg);padding:14px;border-radius:10px;font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;max-height:360px;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-word}
+label.chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--mut);cursor:pointer;user-select:none}
+a.port-link{color:var(--acc);text-decoration:none;font-weight:600}
+a.port-link:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>⚡ Przełącznik lokalnych modeli (LLM / GPU)</h1>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label class="chk" title="Przed uruchomieniem wybranego skryptu zatrzymuje i usuwa poprzednie kontenery llama-*, comfyui oraz photo-restore, zapobiegając konfliktom portu 8080 i braku VRAM">
+        <input type="checkbox" id="preClean" checked>
+        Auto-zwalnianie GPU / portu 8080
+      </label>
+      <button id="stopAllBtn" class="danger" onclick="stopAll()">⏹ Zwolnij GPU (zatrzymaj modele)</button>
+      <span id="connPill" class="pill">łączenie…</span>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>Zasoby sprzętowe (GPU • Procesor • RAM • Dysk)</h2>
+    <div id="gpuBox" class="meta">Pobieranie informacji o zasobach…</div>
+  </div>
+
+  <div class="card">
+    <h2>Aktywne aplikacje i porty (Docker)</h2>
+    <div id="containersBox" class="meta">Pobieranie listy kontenerów…</div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <h2 style="margin:0">Dostępne skrypty wykonywalne (+x) w <code id="scriptsDir">/home/pwit</code></h2>
+      <span class="meta" id="scriptsCount"></span>
+    </div>
+    <div id="scriptsGrid" class="scripts-grid"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <h2 style="margin:0" id="logTitle">Logi wykonania</h2>
+      <span class="meta" id="jobMeta"></span>
+    </div>
+    <pre id="term">Wybierz skrypt powyżej, aby przeładować model.</pre>
+  </div>
+</main>
+
+<script>
+let state = null;
+let selectedArgs = {};
+let customArgs = {};
+let viewingContainerLogs = false;
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderGpu(gpu, host) {
+  const box = document.getElementById('gpuBox');
+  const vramPct = (gpu && gpu.mem_total_mb) ? Math.round((gpu.mem_used_mb / gpu.mem_total_mb) * 100) : 0;
+  const gpuPct = gpu ? (gpu.util_pct ?? 0) : 0;
+  const cpuPct = host ? host.cpu_pct : 0;
+  const ramPct = host ? host.ram_pct : 0;
+  const diskPct = host ? host.disk_pct : 0;
+
+  box.innerHTML = `
+    <div class="hw-grid">
+      <div class="hw-box">
+        ${gpu ? `
+          <div class="row"><b style="color:var(--fg)">🎮 ${esc(gpu.name)}</b><span>${gpu.temp_c}°C</span></div>
+          <div class="bar"><i style="width:${vramPct}%"></i></div>
+          <div class="row"><span>VRAM: <b style="color:var(--fg)">${gpu.mem_used_mb} MB</b> / ${gpu.mem_total_mb} MB (${vramPct}%)</span></div>
+          <div class="bar"><i style="width:${gpuPct}%"></i></div>
+          <div class="row"><span>Procesor GPU: <b style="color:var(--fg)">${gpuPct}%</b></span></div>
+        ` : `<div>Brak danych z <code>nvidia-smi</code></div>`}
+      </div>
+      ${host ? `
+        <div class="hw-box">
+          <div class="row"><b style="color:var(--fg)">⚙️ Procesor (CPU)</b><span>${host.cpu_threads} wątków</span></div>
+          <div class="bar"><i style="width:${cpuPct}%"></i></div>
+          <div class="row"><span>Obciążenie: <b style="color:var(--fg)">${cpuPct}%</b></span></div>
+        </div>
+        <div class="hw-box">
+          <div class="row"><b style="color:var(--fg)">🧠 Pamięć RAM</b><span>${ramPct}%</span></div>
+          <div class="bar"><i style="width:${ramPct}%"></i></div>
+          <div class="row"><span>Użycie: <b style="color:var(--fg)">${host.ram_used_gb} GB</b> / ${host.ram_total_gb} GB</span></div>
+        </div>
+        <div class="hw-box">
+          <div class="row"><b style="color:var(--fg)">💾 Dysk</b><span>wolne: <b style="color:var(--ok)">${host.disk_free_gb} GB</b></span></div>
+          <div class="bar"><i style="width:${diskPct}%"></i></div>
+          <div class="row"><span>Zajęte: <b style="color:var(--fg)">${host.disk_used_gb} GB</b> / ${host.disk_total_gb} GB (${diskPct}%)</span></div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function extractHostPorts(portsStr, ip) {
+  if (!portsStr) return '';
+  const re = /0\.0\.0\.0:(\d+)->/g;
+  const found = [];
+  let m;
+  while ((m = re.exec(portsStr)) !== null) {
+    if (!found.includes(m[1])) found.push(m[1]);
+  }
+  return found.map(p => `<a class="port-link" href="http://${ip}:${p}" target="_blank">:${p}</a>`).join(' ');
+}
+
+function renderContainers(containers, ip) {
+  const box = document.getElementById('containersBox');
+  const running = (containers || []).filter(c => c.state === 'running');
+  if (!running.length) {
+    box.innerHTML = 'Brak uruchomionych kontenerów.';
+    return;
+  }
+  box.innerHTML = `
+    <div class="cnt-list">
+      ${running.map(c => {
+        const eps = (c.endpoints && c.endpoints.length)
+          ? c.endpoints
+          : [{port: null, app: c.image, api: null}];
+        return `
+          <div class="cnt-item">
+            <div class="cnt-head">
+              <div class="cnt-head-left">
+                <span class="tag" style="font-size:12px;font-weight:600;color:var(--fg)">📦 ${esc(c.name)}</span>
+                <span class="pill ok" style="padding:2px 9px;font-size:11px">● ${esc(c.status)}</span>
+              </div>
+              <button style="padding:4px 10px;font-size:12px;white-space:nowrap" onclick="showContainerLogs('${esc(c.name)}')">📋 Logi kontenera</button>
+            </div>
+            <div class="ep-list">
+              ${eps.map(ep => `
+                <div class="ep-row">
+                  <div class="ep-main">
+                    ${ep.port ? `<a class="port-link pill" style="font-size:12px;padding:3px 10px" href="http://${ip}:${ep.port}" target="_blank">🔗 http://${ip}:${ep.port}</a>` : ''}
+                    <b style="color:var(--fg);font-size:13.5px">${esc(ep.app)}</b>
+                  </div>
+                  ${ep.api ? `<span class="meta">API: <code>http://${ip}:${ep.port}${esc(ep.api)}</code></span>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+// Script cards are rebuilt only when the script list (names/metadata) changes,
+// not on every poll – so text inputs and selects keep their focus.
+let scriptsSig = null;
+
+function renderScripts(scripts, job) {
+  const grid = document.getElementById('scriptsGrid');
+  const sig = JSON.stringify(scripts);
+  // Don't rebuild while the user is interacting with a control in the grid – retry on the next poll.
+  if (sig !== scriptsSig && !grid.contains(document.activeElement)) {
+    scriptsSig = sig;
+    document.getElementById('scriptsCount').textContent = `${scripts.length} skryptów`;
+    grid.innerHTML = buildScriptCards(scripts);
+  }
+  updateScriptsJobState(job);
+}
+
+// Updates only button state / card highlight without rebuilding the DOM.
+function updateScriptsJobState(job) {
+  const running = !!(job && job.running);
+  document.querySelectorAll('#scriptsGrid .script-card').forEach(card => {
+    const isRunningJob = running && job.script === card.dataset.script;
+    card.classList.toggle('active', isRunningJob);
+    const btn = card.querySelector('button.run-btn');
+    if (!btn) return;
+    btn.disabled = running;
+    const label = isRunningJob ? '⏳ Uruchamianie…' : '▶ Uruchom / Przeładuj';
+    if (btn.textContent !== label) btn.textContent = label;
+  });
+}
+
+// Event delegation: the script name lives in a data-* attribute and is never injected into inline JS.
+function initScriptsGridEvents() {
+  const grid = document.getElementById('scriptsGrid');
+  grid.addEventListener('click', e => {
+    const btn = e.target.closest('button.run-btn');
+    if (!btn || btn.disabled) return;
+    const card = btn.closest('.script-card');
+    runScript(card.dataset.script, !!card.querySelector('select.preset-select'));
+  });
+  grid.addEventListener('change', e => {
+    if (e.target.matches('select.preset-select')) {
+      selectedArgs[e.target.closest('.script-card').dataset.script] = e.target.value;
+    }
+  });
+  grid.addEventListener('input', e => {
+    if (e.target.matches('input.custom-args')) {
+      customArgs[e.target.closest('.script-card').dataset.script] = e.target.value;
+    }
+  });
+}
+
+function buildScriptCards(scripts) {
+  return scripts.map(s => {
+    const hasPreset = s.presets && s.presets.length > 0;
+    if (hasPreset && !(s.name in selectedArgs)) {
+      const def = s.presets.find(p => p.default) || s.presets[0];
+      selectedArgs[s.name] = (def.args || []).join(' ');
+    }
+    const curPreset = selectedArgs[s.name] ?? '';
+    const curCustom = customArgs[s.name] ?? '';
+    const svcs = s.services || [];
+
+    return `
+      <div class="script-card" data-script="${esc(s.name)}">
+        <div>
+          <div class="script-title">
+            <span>${esc(s.name)}</span>
+          </div>
+          ${svcs.length ? `
+            <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
+              ${svcs.map(sv => `
+                <div style="font-size:12px;display:flex;align-items:baseline;gap:6px">
+                  <span class="pill" style="font-size:11px;padding:1px 7px">:${sv.port}</span>
+                  <span style="color:var(--fg);font-weight:500">${esc(sv.app)}</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+          <div class="tags">
+            ${s.container ? `<span class="tag">📦 ${esc(s.container)}</span>` : ''}
+            ${s.model ? `<span class="tag">🧠 ${esc(s.model)}</span>` : ''}
+            ${s.ctx_size ? `<span class="tag">📏 ctx ${esc(s.ctx_size)}</span>` : ''}
+          </div>
+          ${s.description ? `<div class="desc">${esc(s.description)}</div>` : ''}
+        </div>
+        <div class="controls">
+          ${hasPreset ? `
+            <select class="preset-select">
+              ${s.presets.map(p => {
+                const val = (p.args || []).join(' ');
+                return `<option value="${esc(val)}" ${val === curPreset ? 'selected' : ''}>${esc(p.label)}</option>`;
+              }).join('')}
+            </select>
+          ` : `
+            <input type="text" class="custom-args" placeholder="Opcjonalne argumenty (np. 3)" value="${esc(curCustom)}">
+          `}
+          <button class="primary run-btn">▶ Uruchom / Przeładuj</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function runScript(name, hasPreset) {
+  viewingContainerLogs = false;
+  const rawArg = hasPreset ? (selectedArgs[name] || '') : (customArgs[name] || '');
+  const args = rawArg.trim() ? rawArg.trim().split(/\s+/) : [];
+  const pre_clean = document.getElementById('preClean').checked;
+
+  const res = await fetch('/api/run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({script: name, args, pre_clean})
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || 'Błąd uruchamiania');
+  }
+  await poll();
+}
+
+async function stopAll() {
+  if (!confirm('Zatrzymać i usunąć wszystkie aktywne kontenery modeli (llama-*, comfyui, photo-restore)?')) return;
+  viewingContainerLogs = false;
+  await fetch('/api/stop-all', {method: 'POST'});
+  await poll();
+}
+
+async function showContainerLogs(container) {
+  viewingContainerLogs = true;
+  document.getElementById('logTitle').textContent = `Logi kontenera: ${container}`;
+  const res = await fetch(`/api/logs?container=${encodeURIComponent(container)}`);
+  const data = await res.json();
+  const term = document.getElementById('term');
+  term.textContent = data.logs || data.error || '(brak logów)';
+  term.scrollTop = term.scrollHeight;
+}
+
+async function poll() {
+  const pill = document.getElementById('connPill');
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    state = data;
+
+    document.getElementById('scriptsDir').textContent = data.scripts_dir;
+    renderGpu(data.gpu, data.host);
+    renderContainers(data.containers, data.ip);
+    renderScripts(data.scripts, data.job);
+
+    if (data.job && data.job.running) {
+      pill.className = 'pill';
+      pill.textContent = `⏳ Wykonywanie: ${data.job.script}`;
+    } else {
+      pill.className = 'pill ok';
+      pill.textContent = '● Połączono';
+    }
+
+    if (!viewingContainerLogs && data.job && (data.job.output || data.job.running)) {
+      document.getElementById('logTitle').textContent = `Logi skryptu: ${data.job.script || ''}`;
+      const term = document.getElementById('term');
+      const atBottom = term.scrollHeight - term.scrollTop - term.clientHeight < 60;
+      term.textContent = data.job.output || 'Uruchamianie…';
+      if (atBottom || data.job.running) term.scrollTop = term.scrollHeight;
+    }
+  } catch (e) {
+    pill.className = 'pill err';
+    pill.textContent = '✕ Brak połączenia';
+  }
+}
+
+initScriptsGridEvents();
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

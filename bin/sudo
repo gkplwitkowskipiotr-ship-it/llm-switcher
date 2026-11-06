@@ -1,0 +1,8 @@
+#!/bin/bash
+# If invoked as `sudo docker ...` and the user can access /var/run/docker.sock (docker group) or is root,
+# skip sudo so that .sh scripts can run in the background without a TTY password prompt.
+if [ "$1" = "docker" ] && [ -w /var/run/docker.sock ]; then
+    shift
+    exec /usr/bin/docker "$@"
+fi
+exec /usr/bin/sudo -n "$@"
