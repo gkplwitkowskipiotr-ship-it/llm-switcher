@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="pl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Panel przełączania LLM / GPU</title>
+<title>Local model switcher (LLM / GPU)</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1c2128;--mut:#6b7480;--line:#e2e5ea;--acc:#3b6df0;--acc2:#e8eefe;--ok:#1a8f4c;--ok2:#e6f6ed;--warn:#b7791f;--err:#c63a3a;--err2:#fdeaea;--term:#111418;--termfg:#d8dee9}
 @media (prefers-color-scheme:dark){:root{--bg:#12151a;--card:#1b1f27;--fg:#e6e9ee;--mut:#8b94a1;--line:#2b313c;--acc:#6b93ff;--acc2:#1f2a47;--ok:#4cc582;--ok2:#163325;--warn:#ecc94b;--err:#ff7a7a;--err2:#3a1d22;--term:#0c0e12;--termfg:#d8dee9}}
@@ -54,35 +54,42 @@ pre#term{background:var(--term);color:var(--termfg);padding:14px;border-radius:1
 label.chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--mut);cursor:pointer;user-select:none}
 a.port-link{color:var(--acc);text-decoration:none;font-weight:600}
 a.port-link:hover{text-decoration:underline}
+.lang-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.lang-switch button{border:0;border-radius:0;padding:5px 10px;font-size:12px}
+.lang-switch button.active{background:var(--acc);color:#fff}
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>⚡ Przełącznik lokalnych modeli (LLM / GPU)</h1>
+    <h1 data-i18n="title">⚡ Local model switcher (LLM / GPU)</h1>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <label class="chk" title="Przed uruchomieniem wybranego skryptu zatrzymuje i usuwa poprzednie kontenery llama-*, comfyui oraz photo-restore, zapobiegając konfliktom portu 8080 i braku VRAM">
+      <label class="chk" data-i18n-title="preCleanHint">
         <input type="checkbox" id="preClean" checked>
-        Auto-zwalnianie GPU / portu 8080
+        <span data-i18n="preClean">Auto-free GPU / port 8080</span>
       </label>
-      <button id="stopAllBtn" class="danger" onclick="stopAll()">⏹ Zwolnij GPU (zatrzymaj modele)</button>
-      <span id="connPill" class="pill">łączenie…</span>
+      <button id="stopAllBtn" class="danger" data-i18n="stopAll">⏹ Free GPU (stop models)</button>
+      <span id="connPill" class="pill" data-i18n="connecting">connecting…</span>
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button type="button" data-lang="pl">PL</button>
+        <button type="button" data-lang="en">EN</button>
+      </div>
     </div>
   </header>
 
   <div class="card">
-    <h2>Zasoby sprzętowe (GPU • Procesor • RAM • Dysk)</h2>
-    <div id="gpuBox" class="meta">Pobieranie informacji o zasobach…</div>
+    <h2 data-i18n="hwTitle">Hardware resources (GPU • CPU • RAM • Disk)</h2>
+    <div id="gpuBox" class="meta" data-i18n="hwLoading">Loading resource information…</div>
   </div>
 
   <div class="card">
-    <h2>Aktywne aplikacje i porty (Docker)</h2>
-    <div id="containersBox" class="meta">Pobieranie listy kontenerów…</div>
+    <h2 data-i18n="appsTitle">Active applications and ports (Docker)</h2>
+    <div id="containersBox" class="meta" data-i18n="appsLoading">Loading container list…</div>
   </div>
 
   <div class="card">
     <div class="row" style="margin-bottom:10px">
-      <h2 style="margin:0">Dostępne skrypty wykonywalne (+x) w <code id="scriptsDir">/home/pwit</code></h2>
+      <h2 style="margin:0"><span data-i18n="scriptsTitle">Available executable scripts (+x) in</span> <code id="scriptsDir">…</code></h2>
       <span class="meta" id="scriptsCount"></span>
     </div>
     <div id="scriptsGrid" class="scripts-grid"></div>
@@ -90,25 +97,162 @@ a.port-link:hover{text-decoration:underline}
 
   <div class="card">
     <div class="row" style="margin-bottom:8px">
-      <h2 style="margin:0" id="logTitle">Logi wykonania</h2>
+      <h2 style="margin:0" id="logTitle" data-i18n="logTitle">Execution log</h2>
       <span class="meta" id="jobMeta"></span>
     </div>
-    <pre id="term">Wybierz skrypt powyżej, aby przeładować model.</pre>
+    <pre id="term" data-i18n="logHint">Select a script above to reload a model.</pre>
   </div>
 </main>
 
 <script>
+// ---------------------------------------------------------------------------
+// i18n
+// ---------------------------------------------------------------------------
+const I18N = {
+  en: {
+    title: '⚡ Local model switcher (LLM / GPU)',
+    preClean: 'Auto-free GPU / port 8080',
+    preCleanHint: 'Before launching the selected script, stops and removes previous llama-*, comfyui and photo-restore containers to avoid port 8080 conflicts and running out of VRAM',
+    stopAll: '⏹ Free GPU (stop models)',
+    connecting: 'connecting…',
+    connected: '● Connected',
+    disconnected: '✕ No connection',
+    executing: '⏳ Running: {script}',
+    hwTitle: 'Hardware resources (GPU • CPU • RAM • Disk)',
+    hwLoading: 'Loading resource information…',
+    appsTitle: 'Active applications and ports (Docker)',
+    appsLoading: 'Loading container list…',
+    scriptsTitle: 'Available executable scripts (+x) in',
+    scriptsCount: '{n} scripts',
+    logTitle: 'Execution log',
+    logHint: 'Select a script above to reload a model.',
+    noGpu: 'No data from <code>nvidia-smi</code>',
+    vram: 'VRAM',
+    gpuUtil: 'GPU utilization',
+    cpu: '⚙️ Processor (CPU)',
+    threads: '{n} threads',
+    load: 'Load',
+    ram: '🧠 Memory (RAM)',
+    usage: 'Used',
+    disk: '💾 Disk',
+    free: 'free',
+    diskUsed: 'Used',
+    noContainers: 'No running containers.',
+    containerLogs: '📋 Container logs',
+    argsPlaceholder: 'Optional arguments (e.g. 3)',
+    run: '▶ Run / Reload',
+    starting: '⏳ Starting…',
+    runError: 'Failed to start the script',
+    stopConfirm: 'Stop and remove all active model containers (llama-*, comfyui, photo-restore)?',
+    containerLogsTitle: 'Container logs: {name}',
+    noLogs: '(no logs)',
+    scriptLogsTitle: 'Script log: {script}',
+    startingLog: 'Starting…',
+  },
+  pl: {
+    title: '⚡ Przełącznik lokalnych modeli (LLM / GPU)',
+    preClean: 'Auto-zwalnianie GPU / portu 8080',
+    preCleanHint: 'Przed uruchomieniem wybranego skryptu zatrzymuje i usuwa poprzednie kontenery llama-*, comfyui oraz photo-restore, zapobiegając konfliktom portu 8080 i braku VRAM',
+    stopAll: '⏹ Zwolnij GPU (zatrzymaj modele)',
+    connecting: 'łączenie…',
+    connected: '● Połączono',
+    disconnected: '✕ Brak połączenia',
+    executing: '⏳ Wykonywanie: {script}',
+    hwTitle: 'Zasoby sprzętowe (GPU • Procesor • RAM • Dysk)',
+    hwLoading: 'Pobieranie informacji o zasobach…',
+    appsTitle: 'Aktywne aplikacje i porty (Docker)',
+    appsLoading: 'Pobieranie listy kontenerów…',
+    scriptsTitle: 'Dostępne skrypty wykonywalne (+x) w',
+    scriptsCount: '{n} skryptów',
+    logTitle: 'Logi wykonania',
+    logHint: 'Wybierz skrypt powyżej, aby przeładować model.',
+    noGpu: 'Brak danych z <code>nvidia-smi</code>',
+    vram: 'VRAM',
+    gpuUtil: 'Procesor GPU',
+    cpu: '⚙️ Procesor (CPU)',
+    threads: '{n} wątków',
+    load: 'Obciążenie',
+    ram: '🧠 Pamięć RAM',
+    usage: 'Użycie',
+    disk: '💾 Dysk',
+    free: 'wolne',
+    diskUsed: 'Zajęte',
+    noContainers: 'Brak uruchomionych kontenerów.',
+    containerLogs: '📋 Logi kontenera',
+    argsPlaceholder: 'Opcjonalne argumenty (np. 3)',
+    run: '▶ Uruchom / Przeładuj',
+    starting: '⏳ Uruchamianie…',
+    runError: 'Błąd uruchamiania',
+    stopConfirm: 'Zatrzymać i usunąć wszystkie aktywne kontenery modeli (llama-*, comfyui, photo-restore)?',
+    containerLogsTitle: 'Logi kontenera: {name}',
+    noLogs: '(brak logów)',
+    scriptLogsTitle: 'Logi skryptu: {script}',
+    startingLog: 'Uruchamianie…',
+  },
+};
+
+function detectLang() {
+  const saved = localStorage.getItem('lang');
+  if (saved && I18N[saved]) return saved;
+  return (navigator.language || 'en').toLowerCase().startsWith('pl') ? 'pl' : 'en';
+}
+
+let lang = detectLang();
+
+// Translate a key, substituting {placeholders} from params. Falls back to English, then to the key itself.
+function t(key, params = {}) {
+  const str = (I18N[lang] && I18N[lang][key]) ?? I18N.en[key] ?? key;
+  return str.replace(/\{(\w+)\}/g, (_, k) => (k in params ? params[k] : `{${k}}`));
+}
+
+// Apply translations to static elements marked with data-i18n / data-i18n-title.
+function applyStaticTranslations() {
+  document.documentElement.lang = lang;
+  document.title = t('title').replace(/^⚡\s*/, '');
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); });
+  document.querySelectorAll('.lang-switch button').forEach(b => b.classList.toggle('active', b.dataset.lang === lang));
+}
+
+function setLang(newLang) {
+  if (!I18N[newLang] || newLang === lang) return;
+  lang = newLang;
+  localStorage.setItem('lang', lang);
+  scriptsSig = null;  // force script cards to be rebuilt with the new language
+  applyStaticTranslations();
+  if (viewingContainerLogs && currentContainer) {
+    setDynamicText('logTitle', t('containerLogsTitle', {name: currentContainer}));
+  }
+  poll();
+}
+
+// ---------------------------------------------------------------------------
+// State & helpers
+// ---------------------------------------------------------------------------
 let state = null;
 let selectedArgs = {};
 let customArgs = {};
 let viewingContainerLogs = false;
+let currentContainer = null;
+
+// Once an element shows dynamic content, exclude it from static re-translation.
+function setDynamicText(id, text) {
+  const el = document.getElementById(id);
+  el.removeAttribute('data-i18n');
+  el.textContent = text;
+  return el;
+}
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
 function renderGpu(gpu, host) {
   const box = document.getElementById('gpuBox');
+  box.removeAttribute('data-i18n');
   const vramPct = (gpu && gpu.mem_total_mb) ? Math.round((gpu.mem_used_mb / gpu.mem_total_mb) * 100) : 0;
   const gpuPct = gpu ? (gpu.util_pct ?? 0) : 0;
   const cpuPct = host ? host.cpu_pct : 0;
@@ -121,48 +265,38 @@ function renderGpu(gpu, host) {
         ${gpu ? `
           <div class="row"><b style="color:var(--fg)">🎮 ${esc(gpu.name)}</b><span>${gpu.temp_c}°C</span></div>
           <div class="bar"><i style="width:${vramPct}%"></i></div>
-          <div class="row"><span>VRAM: <b style="color:var(--fg)">${gpu.mem_used_mb} MB</b> / ${gpu.mem_total_mb} MB (${vramPct}%)</span></div>
+          <div class="row"><span>${t('vram')}: <b style="color:var(--fg)">${gpu.mem_used_mb} MB</b> / ${gpu.mem_total_mb} MB (${vramPct}%)</span></div>
           <div class="bar"><i style="width:${gpuPct}%"></i></div>
-          <div class="row"><span>Procesor GPU: <b style="color:var(--fg)">${gpuPct}%</b></span></div>
-        ` : `<div>Brak danych z <code>nvidia-smi</code></div>`}
+          <div class="row"><span>${t('gpuUtil')}: <b style="color:var(--fg)">${gpuPct}%</b></span></div>
+        ` : `<div>${t('noGpu')}</div>`}
       </div>
       ${host ? `
         <div class="hw-box">
-          <div class="row"><b style="color:var(--fg)">⚙️ Procesor (CPU)</b><span>${host.cpu_threads} wątków</span></div>
+          <div class="row"><b style="color:var(--fg)">${t('cpu')}</b><span>${t('threads', {n: host.cpu_threads})}</span></div>
           <div class="bar"><i style="width:${cpuPct}%"></i></div>
-          <div class="row"><span>Obciążenie: <b style="color:var(--fg)">${cpuPct}%</b></span></div>
+          <div class="row"><span>${t('load')}: <b style="color:var(--fg)">${cpuPct}%</b></span></div>
         </div>
         <div class="hw-box">
-          <div class="row"><b style="color:var(--fg)">🧠 Pamięć RAM</b><span>${ramPct}%</span></div>
+          <div class="row"><b style="color:var(--fg)">${t('ram')}</b><span>${ramPct}%</span></div>
           <div class="bar"><i style="width:${ramPct}%"></i></div>
-          <div class="row"><span>Użycie: <b style="color:var(--fg)">${host.ram_used_gb} GB</b> / ${host.ram_total_gb} GB</span></div>
+          <div class="row"><span>${t('usage')}: <b style="color:var(--fg)">${host.ram_used_gb} GB</b> / ${host.ram_total_gb} GB</span></div>
         </div>
         <div class="hw-box">
-          <div class="row"><b style="color:var(--fg)">💾 Dysk</b><span>wolne: <b style="color:var(--ok)">${host.disk_free_gb} GB</b></span></div>
+          <div class="row"><b style="color:var(--fg)">${t('disk')}</b><span>${t('free')}: <b style="color:var(--ok)">${host.disk_free_gb} GB</b></span></div>
           <div class="bar"><i style="width:${diskPct}%"></i></div>
-          <div class="row"><span>Zajęte: <b style="color:var(--fg)">${host.disk_used_gb} GB</b> / ${host.disk_total_gb} GB (${diskPct}%)</span></div>
+          <div class="row"><span>${t('diskUsed')}: <b style="color:var(--fg)">${host.disk_used_gb} GB</b> / ${host.disk_total_gb} GB (${diskPct}%)</span></div>
         </div>
       ` : ''}
     </div>
   `;
 }
 
-function extractHostPorts(portsStr, ip) {
-  if (!portsStr) return '';
-  const re = /0\.0\.0\.0:(\d+)->/g;
-  const found = [];
-  let m;
-  while ((m = re.exec(portsStr)) !== null) {
-    if (!found.includes(m[1])) found.push(m[1]);
-  }
-  return found.map(p => `<a class="port-link" href="http://${ip}:${p}" target="_blank">:${p}</a>`).join(' ');
-}
-
 function renderContainers(containers, ip) {
   const box = document.getElementById('containersBox');
+  box.removeAttribute('data-i18n');
   const running = (containers || []).filter(c => c.state === 'running');
   if (!running.length) {
-    box.innerHTML = 'Brak uruchomionych kontenerów.';
+    box.textContent = t('noContainers');
     return;
   }
   box.innerHTML = `
@@ -178,7 +312,7 @@ function renderContainers(containers, ip) {
                 <span class="tag" style="font-size:12px;font-weight:600;color:var(--fg)">📦 ${esc(c.name)}</span>
                 <span class="pill ok" style="padding:2px 9px;font-size:11px">● ${esc(c.status)}</span>
               </div>
-              <button style="padding:4px 10px;font-size:12px;white-space:nowrap" onclick="showContainerLogs('${esc(c.name)}')">📋 Logi kontenera</button>
+              <button class="logs-btn" data-container="${esc(c.name)}" style="padding:4px 10px;font-size:12px;white-space:nowrap">${t('containerLogs')}</button>
             </div>
             <div class="ep-list">
               ${eps.map(ep => `
@@ -198,17 +332,17 @@ function renderContainers(containers, ip) {
   `;
 }
 
-// Script cards are rebuilt only when the script list (names/metadata) changes,
+// Script cards are rebuilt only when the script list (names/metadata) or the language changes,
 // not on every poll – so text inputs and selects keep their focus.
 let scriptsSig = null;
 
 function renderScripts(scripts, job) {
   const grid = document.getElementById('scriptsGrid');
-  const sig = JSON.stringify(scripts);
+  const sig = lang + JSON.stringify(scripts);
   // Don't rebuild while the user is interacting with a control in the grid – retry on the next poll.
   if (sig !== scriptsSig && !grid.contains(document.activeElement)) {
     scriptsSig = sig;
-    document.getElementById('scriptsCount').textContent = `${scripts.length} skryptów`;
+    document.getElementById('scriptsCount').textContent = t('scriptsCount', {n: scripts.length});
     grid.innerHTML = buildScriptCards(scripts);
   }
   updateScriptsJobState(job);
@@ -223,29 +357,8 @@ function updateScriptsJobState(job) {
     const btn = card.querySelector('button.run-btn');
     if (!btn) return;
     btn.disabled = running;
-    const label = isRunningJob ? '⏳ Uruchamianie…' : '▶ Uruchom / Przeładuj';
+    const label = isRunningJob ? t('starting') : t('run');
     if (btn.textContent !== label) btn.textContent = label;
-  });
-}
-
-// Event delegation: the script name lives in a data-* attribute and is never injected into inline JS.
-function initScriptsGridEvents() {
-  const grid = document.getElementById('scriptsGrid');
-  grid.addEventListener('click', e => {
-    const btn = e.target.closest('button.run-btn');
-    if (!btn || btn.disabled) return;
-    const card = btn.closest('.script-card');
-    runScript(card.dataset.script, !!card.querySelector('select.preset-select'));
-  });
-  grid.addEventListener('change', e => {
-    if (e.target.matches('select.preset-select')) {
-      selectedArgs[e.target.closest('.script-card').dataset.script] = e.target.value;
-    }
-  });
-  grid.addEventListener('input', e => {
-    if (e.target.matches('input.custom-args')) {
-      customArgs[e.target.closest('.script-card').dataset.script] = e.target.value;
-    }
   });
 }
 
@@ -292,15 +405,52 @@ function buildScriptCards(scripts) {
               }).join('')}
             </select>
           ` : `
-            <input type="text" class="custom-args" placeholder="Opcjonalne argumenty (np. 3)" value="${esc(curCustom)}">
+            <input type="text" class="custom-args" placeholder="${esc(t('argsPlaceholder'))}" value="${esc(curCustom)}">
           `}
-          <button class="primary run-btn">▶ Uruchom / Przeładuj</button>
+          <button class="primary run-btn">${t('run')}</button>
         </div>
       </div>
     `;
   }).join('');
 }
 
+// ---------------------------------------------------------------------------
+// Events (delegation: names live in data-* attributes and are never injected into inline JS)
+// ---------------------------------------------------------------------------
+function initEvents() {
+  const grid = document.getElementById('scriptsGrid');
+  grid.addEventListener('click', e => {
+    const btn = e.target.closest('button.run-btn');
+    if (!btn || btn.disabled) return;
+    const card = btn.closest('.script-card');
+    runScript(card.dataset.script, !!card.querySelector('select.preset-select'));
+  });
+  grid.addEventListener('change', e => {
+    if (e.target.matches('select.preset-select')) {
+      selectedArgs[e.target.closest('.script-card').dataset.script] = e.target.value;
+    }
+  });
+  grid.addEventListener('input', e => {
+    if (e.target.matches('input.custom-args')) {
+      customArgs[e.target.closest('.script-card').dataset.script] = e.target.value;
+    }
+  });
+
+  document.getElementById('containersBox').addEventListener('click', e => {
+    const btn = e.target.closest('button.logs-btn');
+    if (btn) showContainerLogs(btn.dataset.container);
+  });
+
+  document.getElementById('stopAllBtn').addEventListener('click', stopAll);
+
+  document.querySelectorAll('.lang-switch button').forEach(b => {
+    b.addEventListener('click', () => setLang(b.dataset.lang));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
 async function runScript(name, hasPreset) {
   viewingContainerLogs = false;
   const rawArg = hasPreset ? (selectedArgs[name] || '') : (customArgs[name] || '');
@@ -310,36 +460,40 @@ async function runScript(name, hasPreset) {
   const res = await fetch('/api/run', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({script: name, args, pre_clean})
+    body: JSON.stringify({script: name, args, pre_clean, lang})
   });
   const data = await res.json();
   if (!res.ok) {
-    alert(data.error || 'Błąd uruchamiania');
+    alert(data.error || t('runError'));
   }
   await poll();
 }
 
 async function stopAll() {
-  if (!confirm('Zatrzymać i usunąć wszystkie aktywne kontenery modeli (llama-*, comfyui, photo-restore)?')) return;
+  if (!confirm(t('stopConfirm'))) return;
   viewingContainerLogs = false;
-  await fetch('/api/stop-all', {method: 'POST'});
+  await fetch('/api/stop-all', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({lang})
+  });
   await poll();
 }
 
 async function showContainerLogs(container) {
   viewingContainerLogs = true;
-  document.getElementById('logTitle').textContent = `Logi kontenera: ${container}`;
-  const res = await fetch(`/api/logs?container=${encodeURIComponent(container)}`);
+  currentContainer = container;
+  setDynamicText('logTitle', t('containerLogsTitle', {name: container}));
+  const res = await fetch(`/api/logs?container=${encodeURIComponent(container)}&lang=${lang}`);
   const data = await res.json();
-  const term = document.getElementById('term');
-  term.textContent = data.logs || data.error || '(brak logów)';
+  const term = setDynamicText('term', data.logs || data.error || t('noLogs'));
   term.scrollTop = term.scrollHeight;
 }
 
 async function poll() {
   const pill = document.getElementById('connPill');
   try {
-    const res = await fetch('/api/status');
+    const res = await fetch(`/api/status?lang=${lang}`);
     const data = await res.json();
     state = data;
 
@@ -350,26 +504,27 @@ async function poll() {
 
     if (data.job && data.job.running) {
       pill.className = 'pill';
-      pill.textContent = `⏳ Wykonywanie: ${data.job.script}`;
+      pill.textContent = t('executing', {script: data.job.script});
     } else {
       pill.className = 'pill ok';
-      pill.textContent = '● Połączono';
+      pill.textContent = t('connected');
     }
 
     if (!viewingContainerLogs && data.job && (data.job.output || data.job.running)) {
-      document.getElementById('logTitle').textContent = `Logi skryptu: ${data.job.script || ''}`;
+      setDynamicText('logTitle', t('scriptLogsTitle', {script: data.job.script || ''}));
       const term = document.getElementById('term');
       const atBottom = term.scrollHeight - term.scrollTop - term.clientHeight < 60;
-      term.textContent = data.job.output || 'Uruchamianie…';
+      setDynamicText('term', data.job.output || t('startingLog'));
       if (atBottom || data.job.running) term.scrollTop = term.scrollHeight;
     }
   } catch (e) {
     pill.className = 'pill err';
-    pill.textContent = '✕ Brak połączenia';
+    pill.textContent = t('disconnected');
   }
 }
 
-initScriptsGridEvents();
+applyStaticTranslations();
+initEvents();
 poll();
 setInterval(poll, 2000);
 </script>

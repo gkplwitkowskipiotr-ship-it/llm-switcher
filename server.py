@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
 LLM / GPU Script Switcher Web Server (port 3001)
-Scans /home/pwit for executable *.sh scripts and lets the user launch/switch them via Web UI.
+Scans SCRIPTS_DIR (default: home directory of the user running the server) for executable *.sh
+scripts and lets the user launch/switch them via Web UI.
 """
 
 import json
 import os
+import pwd
 import re
 import shutil
 import signal
@@ -18,13 +20,112 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", "/home/pwit")).resolve()
+def get_user_home() -> Path:
+    """Home directory of the effective user running this process (from the passwd database, not $HOME)."""
+    try:
+        return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    except KeyError:
+        return Path.home()
+
+
+USER_HOME = get_user_home()
+SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR") or USER_HOME).resolve()
 APP_DIR = Path(__file__).resolve().parent
 PORT = int(os.environ.get("PORT", "3001"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
 # Container name patterns managed by the scripts (excluding open-webui)
 MANAGED_CONTAINER_REGEX = re.compile(r"^(llama-.*|comfyui|photo-restore)$")
+
+# ---------------------------------------------------------------------------
+# i18n – user-facing strings returned by the API (UI labels, logs, errors)
+# ---------------------------------------------------------------------------
+DEFAULT_LANG = "en"
+
+MESSAGES = {
+    "en": {
+        # Services declared by scripts
+        "svc.openwebui_chat": "OpenWebUI (Chat)",
+        "svc.llama_cpu": "llama.cpp CPU ({model})",
+        "svc.images_api": "OpenAI Images API (Qwen-Image)",
+        "svc.comfy_workflow": "ComfyUI (Workflow UI)",
+        "svc.comfy_web": "ComfyUI (Web UI)",
+        "svc.photo_restore": "Photo Restore (Web UI + API)",
+        "svc.whisper": "Whisper large-v3 (Web UI + API)",
+        "svc.llama": "llama.cpp ({model}) – UI & OpenAI API",
+        # Argument presets
+        "preset.q3_128k": "Q3_K_M (128K context)",
+        "preset.q4_95k": "Q4_K_M (95K context)",
+        "preset.q3_vision": "Q3_K_M + Vision (default)",
+        "preset.q4_vision": "Q4_K_M + Vision",
+        "preset.standard": "Standard start",
+        "preset.rebuild": "Rebuild image (--rebuild)",
+        "preset.param": "Parameter: {opt}",
+        # Active endpoints
+        "ep.openwebui": "OpenWebUI (Chat interface)",
+        "ep.whisper": "Whisper large-v3 (Audio/video transcription)",
+        "ep.photo_restore": "Photo Restore Pipeline (Photo restoration)",
+        "ep.comfy": "ComfyUI (Workflow graphical interface)",
+        "ep.qwen_image": "Qwen-Image 2.1 (OpenAI Images API)",
+        # Job log
+        "log.pre_clean": "[pre-clean] Stopping and removing previous containers: {names}\n",
+        "log.starting": "=== Starting: ./{cmd} ===\n",
+        "log.finished": "\n=== Finished with exit code: {code} ===\n",
+        "log.active_apps": "\n--- Active applications and ports ---\n",
+        "log.error": "\n[ERROR] {err}\n",
+        "log.stopping": "\n=== Stopping containers at user request ===\n",
+        # API errors
+        "err.bad_container": "Invalid container name",
+        "err.bad_script": "Invalid script name",
+        "err.script_missing": "Script does not exist or is not executable (+x)",
+        "err.job_running": "Script {script} is already running",
+        "err.not_found": "Not found",
+    },
+    "pl": {
+        "svc.openwebui_chat": "OpenWebUI (Czat)",
+        "svc.llama_cpu": "llama.cpp CPU ({model})",
+        "svc.images_api": "OpenAI Images API (Qwen-Image)",
+        "svc.comfy_workflow": "ComfyUI (Workflow UI)",
+        "svc.comfy_web": "ComfyUI (Web UI)",
+        "svc.photo_restore": "Photo Restore (Web UI + API)",
+        "svc.whisper": "Whisper large-v3 (Web UI + API)",
+        "svc.llama": "llama.cpp ({model}) – UI i OpenAI API",
+        "preset.q3_128k": "Q3_K_M (kontekst 128K)",
+        "preset.q4_95k": "Q4_K_M (kontekst 95K)",
+        "preset.q3_vision": "Q3_K_M + Vision (domyślny)",
+        "preset.q4_vision": "Q4_K_M + Vision",
+        "preset.standard": "Standardowy start",
+        "preset.rebuild": "Przebuduj obraz (--rebuild)",
+        "preset.param": "Parametr: {opt}",
+        "ep.openwebui": "OpenWebUI (Interfejs czatu)",
+        "ep.whisper": "Whisper large-v3 (Transkrypcja audio/wideo)",
+        "ep.photo_restore": "Photo Restore Pipeline (Renowacja zdjęć)",
+        "ep.comfy": "ComfyUI (Interfejs graficzny Workflow)",
+        "ep.qwen_image": "Qwen-Image 2.1 (OpenAI Images API)",
+        "log.pre_clean": "[pre-clean] Zatrzymywanie i usuwanie poprzednich kontenerów: {names}\n",
+        "log.starting": "=== Uruchamianie: ./{cmd} ===\n",
+        "log.finished": "\n=== Zakończono z kodem: {code} ===\n",
+        "log.active_apps": "\n--- Aktywne aplikacje i porty ---\n",
+        "log.error": "\n[BŁĄD] {err}\n",
+        "log.stopping": "\n=== Zatrzymywanie kontenerów na żądanie użytkownika ===\n",
+        "err.bad_container": "Nieprawidłowa nazwa kontenera",
+        "err.bad_script": "Nieprawidłowa nazwa skryptu",
+        "err.script_missing": "Skrypt nie istnieje lub nie ma uprawnień +x",
+        "err.job_running": "Trwa już wykonywanie skryptu {script}",
+        "err.not_found": "Nie znaleziono",
+    },
+}
+
+
+def normalize_lang(lang) -> str:
+    lang = str(lang or "").lower()[:2]
+    return lang if lang in MESSAGES else DEFAULT_LANG
+
+
+def tr(lang: str, key: str, **params) -> str:
+    """Translate a message key; falls back to the default language, then to the key itself."""
+    text = MESSAGES.get(lang, {}).get(key) or MESSAGES[DEFAULT_LANG].get(key, key)
+    return text.format(**params) if params else text
 
 
 class JobState:
@@ -71,7 +172,7 @@ def docker_cmd() -> list[str]:
     return ["sudo", "-n", "docker"]
 
 
-def parse_script_metadata(path: Path) -> dict:
+def parse_script_metadata(path: Path, lang: str = DEFAULT_LANG) -> dict:
     """Extract description, model, port, container name, and supported arguments from a .sh file."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -117,28 +218,28 @@ def parse_script_metadata(path: Path) -> dict:
     services = []
     if path.name == "start-photo-restore.sh":
         if webui_port:
-            services.append({"port": int(webui_port), "app": "OpenWebUI (Czat)", "path": "/"})
+            services.append({"port": int(webui_port), "app": tr(lang, "svc.openwebui_chat"), "path": "/"})
         if text_port:
-            services.append({"port": int(text_port), "app": f"llama.cpp CPU ({model_file or 'LLM'})", "path": "/v1"})
+            services.append({"port": int(text_port), "app": tr(lang, "svc.llama_cpu", model=model_file or "LLM"), "path": "/v1"})
         if port:
-            services.append({"port": int(port), "app": "OpenAI Images API (Qwen-Image)", "path": "/v1"})
+            services.append({"port": int(port), "app": tr(lang, "svc.images_api"), "path": "/v1"})
         if comfy_port:
-            services.append({"port": int(comfy_port), "app": "ComfyUI (Workflow UI)", "path": "/"})
+            services.append({"port": int(comfy_port), "app": tr(lang, "svc.comfy_workflow"), "path": "/"})
     elif path.name == "start-comfyui-qwen-image.sh":
         if port:
-            services.append({"port": int(port), "app": "OpenAI Images API (Qwen-Image)", "path": "/v1/images/generations"})
+            services.append({"port": int(port), "app": tr(lang, "svc.images_api"), "path": "/v1/images/generations"})
         if comfy_port:
-            services.append({"port": int(comfy_port), "app": "ComfyUI (Web UI)", "path": "/"})
+            services.append({"port": int(comfy_port), "app": tr(lang, "svc.comfy_web"), "path": "/"})
     elif path.name == "start-photo-restore-pipeline.sh":
         if port:
-            services.append({"port": int(port), "app": "Photo Restore (Web UI + API)", "path": "/"})
+            services.append({"port": int(port), "app": tr(lang, "svc.photo_restore"), "path": "/"})
     elif path.name == "start-whisper.sh":
         if port:
-            services.append({"port": int(port), "app": "Whisper large-v3 (Web UI + API)", "path": "/"})
+            services.append({"port": int(port), "app": tr(lang, "svc.whisper"), "path": "/"})
     elif path.name.startswith("start-llama-"):
         p = int(port) if port and port.isdigit() else 8080
         lbl = model_file or path.stem.replace("start-llama-", "")
-        services.append({"port": p, "app": f"llama.cpp ({lbl}) – UI & OpenAI API", "path": "/"})
+        services.append({"port": p, "app": tr(lang, "svc.llama", model=lbl), "path": "/"})
     else:
         # Generic detection from comments like "# 8099 - opis" or PORT variable
         for m_c in re.finditer(r"^#\s*(\d{2,5})\s*-\s*(.+)$", text, re.M):
@@ -150,18 +251,18 @@ def parse_script_metadata(path: Path) -> dict:
     presets = []
     if path.name == "start-llama-qwen3.sh":
         presets = [
-            {"label": "Q3_K_M (kontekst 128K)", "args": ["3"], "default": True},
-            {"label": "Q4_K_M (kontekst 95K)", "args": ["4"], "default": False},
+            {"label": tr(lang, "preset.q3_128k"), "args": ["3"], "default": True},
+            {"label": tr(lang, "preset.q4_95k"), "args": ["4"], "default": False},
         ]
     elif path.name == "start-llama-qwen35-vision.sh":
         presets = [
-            {"label": "Q3_K_M + Vision (domyślny)", "args": ["3"], "default": True},
-            {"label": "Q4_K_M + Vision", "args": ["4"], "default": False},
+            {"label": tr(lang, "preset.q3_vision"), "args": ["3"], "default": True},
+            {"label": tr(lang, "preset.q4_vision"), "args": ["4"], "default": False},
         ]
     elif path.name == "start-whisper.sh":
         presets = [
-            {"label": "Standardowy start", "args": [], "default": True},
-            {"label": "Przebuduj obraz (--rebuild)", "args": ["--rebuild"], "default": False},
+            {"label": tr(lang, "preset.standard"), "args": [], "default": True},
+            {"label": tr(lang, "preset.rebuild"), "args": ["--rebuild"], "default": False},
         ]
     elif "$1" in text:
         # Generic fallback if a new script checks $1
@@ -170,7 +271,7 @@ def parse_script_metadata(path: Path) -> dict:
         for opt in m_opts:
             if opt not in seen:
                 seen.append(opt)
-                presets.append({"label": f"Parametr: {opt}", "args": [opt], "default": len(presets) == 0})
+                presets.append({"label": tr(lang, "preset.param", opt=opt), "args": [opt], "default": len(presets) == 0})
 
     return {
         "name": path.name,
@@ -186,31 +287,31 @@ def parse_script_metadata(path: Path) -> dict:
     }
 
 
-def list_executable_scripts() -> list[dict]:
+def list_executable_scripts(lang: str = DEFAULT_LANG) -> list[dict]:
     scripts = []
     if not SCRIPTS_DIR.exists():
         return scripts
     for entry in sorted(SCRIPTS_DIR.iterdir(), key=lambda p: p.name):
         if entry.is_file() and entry.suffix == ".sh" and os.access(entry, os.X_OK):
-            scripts.append(parse_script_metadata(entry))
+            scripts.append(parse_script_metadata(entry, lang))
     return scripts
 
 
-def describe_active_port(host_port: int, container_name: str, image: str, command: str) -> dict:
+def describe_active_port(host_port: int, container_name: str, image: str, command: str, lang: str = DEFAULT_LANG) -> dict:
     """Identify what application and model are served on a given active Docker host port."""
     model_match = re.search(r"-m\s+/models/([^\s\"']+)", command)
     model_name = model_match.group(1) if model_match else None
 
     if "open-webui" in image or "open-webui" in container_name or host_port == 3000:
-        return {"port": host_port, "app": "OpenWebUI (Interfejs czatu)", "kind": "Web UI", "api": None}
+        return {"port": host_port, "app": tr(lang, "ep.openwebui"), "kind": "Web UI", "api": None}
     if "whisper" in image or host_port in (3002, 8300):
-        return {"port": host_port, "app": "Whisper large-v3 (Transkrypcja audio/wideo)", "kind": "Web UI + API", "api": f"/api/status"}
+        return {"port": host_port, "app": tr(lang, "ep.whisper"), "kind": "Web UI + API", "api": f"/api/status"}
     if "photo-restore" in image or host_port == 8097:
-        return {"port": host_port, "app": "Photo Restore Pipeline (Renowacja zdjęć)", "kind": "Web UI + API", "api": "/restore"}
+        return {"port": host_port, "app": tr(lang, "ep.photo_restore"), "kind": "Web UI + API", "api": "/restore"}
     if host_port == 8188:
-        return {"port": host_port, "app": "ComfyUI (Interfejs graficzny Workflow)", "kind": "Web UI", "api": None}
+        return {"port": host_port, "app": tr(lang, "ep.comfy"), "kind": "Web UI", "api": None}
     if host_port == 8099 or "comfyui" in image:
-        return {"port": host_port, "app": "Qwen-Image 2.1 (OpenAI Images API)", "kind": "OpenAI API", "api": "/v1/images/generations"}
+        return {"port": host_port, "app": tr(lang, "ep.qwen_image"), "kind": "OpenAI API", "api": "/v1/images/generations"}
     if "llama.cpp" in image or container_name.startswith("llama-"):
         mode = "CPU" if ("--device none" in command or container_name == "llama-cpu") else "GPU"
         vision = " + Vision" if "--mmproj" in command else ""
@@ -221,7 +322,7 @@ def describe_active_port(host_port: int, container_name: str, image: str, comman
     return {"port": host_port, "app": f"{container_name} ({image})", "kind": "HTTP", "api": None}
 
 
-def get_running_containers() -> list[dict]:
+def get_running_containers(lang: str = DEFAULT_LANG) -> list[dict]:
     cmd = docker_cmd() + [
         "ps",
         "-a",
@@ -247,7 +348,7 @@ def get_running_containers() -> list[dict]:
                     if hp not in host_ports:
                         host_ports.append(hp)
 
-                endpoints = [describe_active_port(hp, name, image, command) for hp in host_ports]
+                endpoints = [describe_active_port(hp, name, image, command, lang) for hp in host_ports]
 
                 containers.append(
                     {
@@ -365,7 +466,7 @@ def get_gpu_status() -> dict | None:
     return None
 
 
-def cleanup_managed_containers(log_fn):
+def cleanup_managed_containers(log_fn, lang: str = DEFAULT_LANG):
     """Stop and remove existing GPU/LLM containers so port 8080 and VRAM are freed before launching."""
     dcmd = docker_cmd()
     res = subprocess.run(
@@ -379,14 +480,14 @@ def cleanup_managed_containers(log_fn):
     names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
     to_remove = [n for n in names if MANAGED_CONTAINER_REGEX.match(n)]
     if to_remove:
-        log_fn(f"[pre-clean] Zatrzymywanie i usuwanie poprzednich kontenerów: {', '.join(to_remove)}\n")
+        log_fn(tr(lang, "log.pre_clean", names=", ".join(to_remove)))
         subprocess.run(dcmd + ["rm", "-f"] + to_remove, capture_output=True, text=True, timeout=30)
 
 
 def build_exec_env() -> dict:
     """Prepare environment variables so scripts work whether service runs as root or user."""
     env = os.environ.copy()
-    env["HOME"] = str(SCRIPTS_DIR)
+    env["HOME"] = str(USER_HOME)
     env["PYTHONUNBUFFERED"] = "1"
     # Prepend our bin shim directory so `sudo docker` works seamlessly even without a TTY
     shim_dir = str(APP_DIR / "bin")
@@ -394,7 +495,7 @@ def build_exec_env() -> dict:
     return env
 
 
-def run_script_worker(script_name: str, args: list[str], pre_clean: bool):
+def run_script_worker(script_name: str, args: list[str], pre_clean: bool, lang: str = DEFAULT_LANG):
     script_path = (SCRIPTS_DIR / script_name).resolve()
 
     def append_log(text: str):
@@ -402,9 +503,9 @@ def run_script_worker(script_name: str, args: list[str], pre_clean: bool):
             JOB.output_lines.append(text)
 
     try:
-        append_log(f"=== Uruchamianie: ./{script_name} {' '.join(args)} ===\n")
+        append_log(tr(lang, "log.starting", cmd=" ".join([script_name] + args)))
         if pre_clean:
-            cleanup_managed_containers(append_log)
+            cleanup_managed_containers(append_log, lang)
 
         proc = subprocess.Popen(
             [str(script_path)] + args,
@@ -429,12 +530,12 @@ def run_script_worker(script_name: str, args: list[str], pre_clean: bool):
             JOB.finished_at = time.time()
             JOB.running = False
             JOB.proc = None
-        append_log(f"\n=== Zakończono z kodem: {proc.returncode} ===\n")
+        append_log(tr(lang, "log.finished", code=proc.returncode))
         if proc.returncode == 0:
             ip = get_lan_ip()
-            running = [c for c in get_running_containers() if c.get("state") == "running"]
+            running = [c for c in get_running_containers(lang) if c.get("state") == "running"]
             if running:
-                append_log("\n--- Aktywne aplikacje i porty ---\n")
+                append_log(tr(lang, "log.active_apps"))
                 for c in running:
                     for ep in c.get("endpoints", []):
                         append_log(f" • Port :{ep['port']} -> {ep['app']}  [ http://{ip}:{ep['port']} ]\n")
@@ -444,7 +545,7 @@ def run_script_worker(script_name: str, args: list[str], pre_clean: bool):
             JOB.finished_at = time.time()
             JOB.running = False
             JOB.proc = None
-        append_log(f"\n[BŁĄD] {e}\n")
+        append_log(tr(lang, "log.error", err=e))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -462,6 +563,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        lang = normalize_lang(qs.get("lang", [""])[0])
         if parsed.path in ("/", "/index.html"):
             html_path = APP_DIR / "index.html"
             raw = html_path.read_bytes()
@@ -477,8 +580,8 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "ip": get_lan_ip(),
                     "scripts_dir": str(SCRIPTS_DIR),
-                    "scripts": list_executable_scripts(),
-                    "containers": get_running_containers(),
+                    "scripts": list_executable_scripts(lang),
+                    "containers": get_running_containers(lang),
                     "gpu": get_gpu_status(),
                     "host": get_host_metrics(),
                     "job": JOB.to_dict(),
@@ -487,10 +590,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/logs":
-            qs = parse_qs(parsed.query)
             container = qs.get("container", [""])[0]
             if not container or not re.match(r"^[a-zA-Z0-9_.-]+$", container):
-                self._send_json({"error": "Nieprawidłowa nazwa kontenera"}, 400)
+                self._send_json({"error": tr(lang, "err.bad_container")}, 400)
                 return
             try:
                 res = subprocess.run(
@@ -505,7 +607,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
             return
 
-        self._send_json({"error": "Not found"}, 404)
+        self._send_json({"error": tr(lang, "err.not_found")}, 404)
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -515,6 +617,9 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(body.decode("utf-8"))
         except Exception:
             payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        lang = normalize_lang(payload.get("lang"))
 
         if parsed.path == "/api/run":
             script_name = str(payload.get("script", "")).strip()
@@ -522,17 +627,17 @@ class Handler(BaseHTTPRequestHandler):
             pre_clean = bool(payload.get("pre_clean", True))
 
             if not script_name or "/" in script_name or "\\" in script_name or not script_name.endswith(".sh"):
-                self._send_json({"error": "Nieprawidłowa nazwa skryptu"}, 400)
+                self._send_json({"error": tr(lang, "err.bad_script")}, 400)
                 return
 
             script_path = (SCRIPTS_DIR / script_name).resolve()
             if script_path.parent != SCRIPTS_DIR or not script_path.is_file() or not os.access(script_path, os.X_OK):
-                self._send_json({"error": "Skrypt nie istnieje lub nie ma uprawnień +x"}, 404)
+                self._send_json({"error": tr(lang, "err.script_missing")}, 404)
                 return
 
             with JOB.lock:
                 if JOB.running:
-                    self._send_json({"error": f"Trwa już wykonywanie skryptu {JOB.script}"}, 409)
+                    self._send_json({"error": tr(lang, "err.job_running", script=JOB.script)}, 409)
                     return
                 JOB.running = True
                 JOB.script = script_name
@@ -544,7 +649,7 @@ class Handler(BaseHTTPRequestHandler):
 
             t = threading.Thread(
                 target=run_script_worker,
-                args=(script_name, args, pre_clean),
+                args=(script_name, args, pre_clean, lang),
                 daemon=True,
             )
             t.start()
@@ -558,16 +663,16 @@ class Handler(BaseHTTPRequestHandler):
                         os.killpg(os.getpgid(JOB.proc.pid), signal.SIGTERM)
                     except Exception:
                         pass
-                JOB.output_lines.append("\n=== Zatrzymywanie kontenerów na żądanie użytkownika ===\n")
-            cleanup_managed_containers(lambda msg: JOB.output_lines.append(msg))
+                JOB.output_lines.append(tr(lang, "log.stopping"))
+            cleanup_managed_containers(lambda msg: JOB.output_lines.append(msg), lang)
             self._send_json({"ok": True})
             return
 
-        self._send_json({"error": "Not found"}, 404)
+        self._send_json({"error": tr(lang, "err.not_found")}, 404)
 
 
 def main():
-    print(f"LLM Switcher Web UI: http://{get_lan_ip()}:{PORT} (katalog skryptów: {SCRIPTS_DIR})")
+    print(f"LLM Switcher Web UI: http://{get_lan_ip()}:{PORT} (scripts directory: {SCRIPTS_DIR})")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     server.serve_forever()
 
